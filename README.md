@@ -124,6 +124,12 @@ python -m app.main --run --limit 100
 | `BB_BASE_URL` | 教学网基础 URL | `https://course.pku.edu.cn` |
 | `BB_LOGIN_URL` | 登录入口 URL | 未登录时跳转的统一认证页 |
 | `BB_COURSES_URL` | 课程列表页 URL | 登录后可访问的 portal 页 |
+| `COURSE_TERM_FILTER` | 课程学期过滤模式 | `current`（默认）或 `off` |
+
+### 课程范围过滤
+
+- `COURSE_TERM_FILTER=current`（默认）：仅抓取课程名里“`xx-xx学年第N学期`”与当前时间匹配的课程
+- `COURSE_TERM_FILTER=off`：关闭学期过滤（会抓到历史课程）
 
 ### 推送配置
 
