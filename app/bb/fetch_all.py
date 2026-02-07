@@ -112,6 +112,7 @@ async def fetch_all_items(
     state_path: Path,
     portal_url: str,
     headless: bool,
+    course_term_filter: str = "current",
     timeout_ms: int = 45_000,
     course_limit: int = 0,
 ) -> FetchAllResult:
@@ -130,7 +131,7 @@ async def fetch_all_items(
         page = await context.new_page()
         try:
             await _safe_goto(page=page, url=portal_url, wait_until="domcontentloaded", timeout_ms=timeout_ms, retries=3)
-            courses = await eval_courses_on_portal_page(page=page)
+            courses = await eval_courses_on_portal_page(page=page, course_term_filter=course_term_filter)
             if course_limit and course_limit > 0:
                 courses = courses[:course_limit]
             logger.info("courses to fetch: %d", len(courses))

@@ -214,6 +214,7 @@ def main(argv: list[str] | None = None) -> int:
                 portal_url=config.bb_courses_url or config.bb_base_url,
                 headless=config.headless,
                 debug_html_path=debug_html_path,
+                course_term_filter=config.course_term_filter,
             )
         )
         logger.info("courses found: %d", len(courses))
@@ -227,6 +228,7 @@ def main(argv: list[str] | None = None) -> int:
                 state_path=config.bb_state_path,
                 portal_url=config.bb_courses_url or config.bb_base_url,
                 headless=config.headless,
+                course_term_filter=config.course_term_filter,
                 course_limit=args.course_limit,
             )
         )
@@ -283,6 +285,7 @@ def main(argv: list[str] | None = None) -> int:
                 state_path=config.bb_state_path,
                 portal_url=config.bb_courses_url or config.bb_base_url,
                 headless=config.headless,
+                course_term_filter=config.course_term_filter,
                 course_limit=args.course_limit,
             )
         )

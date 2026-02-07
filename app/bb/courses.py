@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -106,14 +108,54 @@ class Course:
     course_id: str = ""
 
 
-def extract_course_id(url: str) -> str:
-    import re
+_COURSE_TERM_RE = re.compile(r"(?P<start>\d{2})-(?P<end>\d{2})学年第(?P<term>[123])学期")
 
+
+def extract_course_id(url: str) -> str:
     for pattern in (r"key=(_\d+_\d+)", r"course_id=(_\d+_\d+)"):
         m = re.search(pattern, url)
         if m:
             return m.group(1)
     return ""
+
+
+def _parse_course_term(name: str) -> tuple[int, int, int] | None:
+    m = _COURSE_TERM_RE.search(name)
+    if not m:
+        return None
+    return int(m.group("start")), int(m.group("end")), int(m.group("term"))
+
+
+def _current_term(today: date | None = None) -> tuple[int, int, int]:
+    d = today or date.today()
+    # PKU convention:
+    # - term 1: Sep-Jan
+    # - term 2: Feb-Jul
+    # - term 3: Aug (summer term, if any)
+    if d.month >= 9:
+        return d.year % 100, (d.year + 1) % 100, 1
+    if d.month == 8:
+        return (d.year - 1) % 100, d.year % 100, 3
+    if d.month >= 2:
+        return (d.year - 1) % 100, d.year % 100, 2
+    return (d.year - 1) % 100, d.year % 100, 1
+
+
+def _filter_courses_by_term(courses: list[Course], mode: str) -> tuple[list[Course], str]:
+    m = (mode or "current").strip().lower()
+    if m in {"off", "all", "none", "false", "0"}:
+        return courses, "course term filter disabled"
+    if m != "current":
+        m = "current"
+
+    parsed: list[tuple[Course, tuple[int, int, int] | None]] = [(c, _parse_course_term(c.name)) for c in courses]
+    parseable = [p for _, p in parsed if p is not None]
+    if not parseable:
+        return courses, "no term tag found in course names; skipped current-term filter"
+
+    target = _current_term()
+    kept = [c for c, term in parsed if term == target]
+    return kept, f"current-term filter target={target[0]:02d}-{target[1]:02d} term={target[2]} kept={len(kept)}/{len(courses)}"
 
 
 async def fetch_courses_from_portal(
@@ -122,6 +164,7 @@ async def fetch_courses_from_portal(
     portal_url: str,
     headless: bool,
     debug_html_path: Path,
+    course_term_filter: str = "current",
     timeout_ms: int = 30_000,
 ) -> list[Course]:
     if not portal_url:
@@ -156,14 +199,16 @@ async def fetch_courses_from_portal(
                 for x in courses_raw
             ]
             courses = [c for c in courses if c.name and c.url]
-            logger.info("course extraction: %s (count=%d)", note, len(courses))
+            raw_count = len(courses)
+            courses, filter_note = _filter_courses_by_term(courses, mode=course_term_filter)
+            logger.info("course extraction: %s (raw=%d kept=%d) | %s", note, raw_count, len(courses), filter_note)
             return courses
         finally:
             await context.close()
             await browser.close()
 
 
-async def eval_courses_on_portal_page(*, page) -> list[Course]:
+async def eval_courses_on_portal_page(*, page, course_term_filter: str = "off") -> list[Course]:
     result: dict = await page.evaluate(_COURSE_EXTRACT_SCRIPT)
     courses_raw = result.get("courses", []) or []
     courses = [
@@ -176,6 +221,12 @@ async def eval_courses_on_portal_page(*, page) -> list[Course]:
     ]
     courses = [c for c in courses if c.name and c.url]
     if courses:
+        filtered, _ = _filter_courses_by_term(courses, mode=course_term_filter)
+        if filtered:
+            return filtered
+        if (course_term_filter or "").strip().lower() in {"current"}:
+            logger.info("course extraction kept 0 courses after current-term filter")
+            return []
         return courses
 
     url = (getattr(page, "url", "") or "").lower()
