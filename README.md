@@ -2,7 +2,7 @@
 
 某些课莫名其妙会蹦出作业挺让人心烦的，所以我做了本项目。
 
-在本地/云端（WSL/Linux）运行的教学网（Blackboard Learn）更新监控脚本：抓取课程内容 → SQLite 去重 → Bark 推送。
+在本地/云端（WSL/Linux）运行的教学网（Blackboard Learn）更新监控脚本：抓取课程内容 → SQLite 去重 → 多渠道推送（Bark / Server酱微信通知）。
 
 > 📝 更详细的计划、里程碑与设计说明见 [PLAN.md](PLAN.md)
 
@@ -36,7 +36,7 @@
 
 - ✅ 自动抓取课程更新
 - ✅ SQLite 本地去重
-- ✅ Bark 推送通知（iOS/iPadOS）
+- ✅ 多渠道推送通知（Bark iOS / Server酱 微信）
 - ✅ 云端无人值守运行（自动刷新登录态）
 - ✅ 首次运行防刷屏机制
 
@@ -78,9 +78,17 @@ python -m playwright install-deps chromium  # 可能需要 sudo
    cp .env.example .env
    ```
 
-2. 编辑 `.env`：
+2. 编辑 `.env`，选择推送方式：
    ```env
+   # 推送后端（二选一）
+   PUSH_BACKEND=serverchan          # 或 bark
+
+   # Bark（iOS 用户）
    BARK_ENDPOINT=<你的Bark Token>
+
+   # Server酱（Android 用户，通过微信接收）
+   SERVERCHAN_SENDKEY=<你的SendKey>
+
    BB_USERNAME=<学号>
    BB_PASSWORD=<密码>
    ```
@@ -100,7 +108,7 @@ python scripts/export_state.py
 **预览模式（不推送）：**
 
 ```bash
-python -m app.main --run --dry-run --dry-run-out data/bark_preview.json --course-limit 1 --limit 10
+python -m app.main --run --dry-run --dry-run-out data/push_preview.json --course-limit 1 --limit 10
 ```
 
 **正式运行（会推送）：**
@@ -133,13 +141,25 @@ python -m app.main --run --limit 100
 
 ### 推送配置
 
+| 配置项 | 说明 | 可选值 |
+|--------|------|--------|
+| `PUSH_BACKEND` | 推送后端选择 | `bark`（iOS）或 `serverchan`（Android 微信） |
+
+**Bark 方式（iOS/iPadOS）：**
+
 | 配置项 | 说明 | 格式 |
 |--------|------|------|
 | `BARK_ENDPOINT` | Bark 推送地址 | 完整 URL：`https://api.day.app/<token>`<br>或仅 Token：`<token>` |
 
-> 📱 **注意**：Bark 目前只支持 iOS/iPadOS 设备。
-> 
-> 如需邮件通知支持，欢迎提 PR！
+**Server酱 方式（Android，通过微信接收）：**
+
+| 配置项 | 说明 | 格式 |
+|--------|------|------|
+| `SERVERCHAN_SENDKEY` | Server酱 SendKey | 从 https://sct.ftqq.com/ 获取 |
+
+> 📱 **注意**：
+> - Bark 仅支持 iOS/iPadOS；Server酱 通过微信推送，支持 Android 和 iOS
+> - ⚠️ **Server酱 免费版每日最多推送 5 条**。正常使用（非首次初始化）每天教学网更新通常不超过 5 条，一般够用。如果不够可升级付费版或提 PR 增加其他渠道
 
 ### 自动登录配置
 
@@ -161,7 +181,7 @@ python -m app.main --run --limit 100
 
 **预览（不推送）：**
 ```bash
-python -m app.main --run --dry-run --dry-run-out data/bark_preview.json
+python -m app.main --run --dry-run --dry-run-out data/push_preview.json
 ```
 
 **正式运行（推送）：**
@@ -188,7 +208,7 @@ python -m app.main --check-login
 | `logs/run.log` | 运行日志 |
 | `data/storage_state.json` | 登录态文件 |
 | `data/state.db` | SQLite 数据库（去重/通知状态） |
-| `data/bark_preview.json` | Dry-run 预览输出 |
+| `data/push_preview.json` | Dry-run 预览输出 |
 
 ---
 
@@ -222,5 +242,5 @@ bash check.sh
 **特别欢迎的贡献方向：**
 - 📧 邮件通知支持
 - 🔐 非 IAAA 登录支持
-- 🎨 更多推送渠道（微信、Telegram 等）
+- 🎨 更多推送渠道（PushDeer、Telegram 等）
 - 🐛 Bug 修复和功能改进
