@@ -23,7 +23,7 @@ from app.bb import (
 )
 from app.config import load_config
 from app.logging_utils import setup_logging
-from app.notify import message_for_new_item, message_for_updated_item, send_serverchan
+from app.notify import message_for_new_item, message_for_updated_item, send_bark, send_serverchan
 from app.store import init_db
 
 
@@ -35,11 +35,21 @@ def _project_root() -> Path:
 
 
 def _send_push(config: object, *, title: str, body: str, url: str = "") -> None:
-    """Dispatch push via Server酱."""
-    sc_key = (getattr(config, "serverchan_sendkey", "") or "").strip()
-    if not sc_key:
-        raise RuntimeError("SERVERCHAN_SENDKEY is not set")
-    send_serverchan(sendkey=sc_key, title=title, body=body)
+    """Dispatch to the configured push backend (PUSH_BACKEND: bark | serverchan)."""
+    backend = (getattr(config, "push_backend", "bark") or "bark").strip().lower()
+    if backend == "serverchan":
+        sc_key = (getattr(config, "serverchan_sendkey", "") or "").strip()
+        if not sc_key:
+            raise RuntimeError("PUSH_BACKEND=serverchan but SERVERCHAN_SENDKEY is not set")
+        send_serverchan(sendkey=sc_key, title=title, body=body)
+        return
+    if backend == "bark":
+        bark_ep = (getattr(config, "bark_endpoint", "") or "").strip()
+        if not bark_ep:
+            raise RuntimeError("PUSH_BACKEND=bark but BARK_ENDPOINT is not set")
+        send_bark(endpoint=bark_ep, title=title, body=body, url=url)
+        return
+    raise RuntimeError(f"unknown PUSH_BACKEND '{backend}' (expected 'bark' or 'serverchan')")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -56,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--debug-grades", action="store_true", help='Dump HTML for one course "个人成绩" page.')
     parser.add_argument("--fetch-all", action="store_true", help="Fetch all courses and all boards into unified Items.")
-    parser.add_argument("--run", action="store_true", help="Fetch all items and push Server酱 notifications.")
+    parser.add_argument("--run", action="store_true", help="Fetch all items and push notifications (Server酱 / Bark).")
     parser.add_argument("--dry-run", action="store_true", help="Do not push; only log pending notifications.")
     parser.add_argument(
         "--dry-run-out",
@@ -302,7 +312,11 @@ def main(argv: list[str] | None = None) -> int:
         # First-run behavior: avoid spamming historical items.
         # If the DB has no notified rows yet, send one initialization message and mark all current items as notified.
         if is_bootstrap:
-            sc_key = (config.serverchan_sendkey or "").strip()
+            backend = (config.push_backend or "bark").strip().lower()
+            key_ok = bool(
+                (backend == "serverchan" and (config.serverchan_sendkey or "").strip())
+                or (backend == "bark" and (config.bark_endpoint or "").strip())
+            )
             init_title = "PKU-BlackBoard-Watcher 初始化完成"
             init_body = (
                 f"已同步历史记录：{len(items)} 条（课程：{len(result.courses)} 门）\n"
@@ -327,8 +341,8 @@ def main(argv: list[str] | None = None) -> int:
                 logger.info("done")
                 return 0
 
-            if not sc_key:
-                logger.error("bootstrap requires SERVERCHAN_SENDKEY to send the initialization message")
+            if not key_ok:
+                logger.error("bootstrap requires PUSH_BACKEND=%s key to send the initialization message", backend)
                 return 2
 
             # Upsert first so mark_notified has rows to update.
@@ -387,13 +401,17 @@ def main(argv: list[str] | None = None) -> int:
         pending.sort(key=lambda t: (-t[0], t[1]))
         to_send = pending[:limit] if limit > 0 else pending
 
-        sc_key = (config.serverchan_sendkey or "").strip()
+        backend = (config.push_backend or "bark").strip().lower()
+        key_ok = bool(
+            (backend == "serverchan" and (config.serverchan_sendkey or "").strip())
+            or (backend == "bark" and (config.bark_endpoint or "").strip())
+        )
         sent_pairs: list[tuple[str, str]] = []
         preview_out = Path(args.dry_run_out) if args.dry_run_out else (root / "data" / "push_preview.json")
 
-        logger.info("run summary: items=%d pending=%d limit=%d", len(items), len(pending), limit)
-        if not sc_key:
-            logger.warning("SERVERCHAN_SENDKEY is not set; will not push (use --dry-run to silence this).")
+        logger.info("run summary: items=%d pending=%d limit=%d backend=%s", len(items), len(pending), limit, backend)
+        if not key_ok:
+            logger.warning("PUSH_BACKEND=%s key not set; will not push (use --dry-run to silence this).", backend)
 
         previews: list[dict] = []
         for _, fp, state_fp, msg in to_send:
@@ -404,7 +422,7 @@ def main(argv: list[str] | None = None) -> int:
             logger.info("push planned: %s | %s", title, body.splitlines()[0] if body else "")
             if args.dry_run:
                 previews.append({"fp": fp, "state_fp": state_fp, "title": title, "body": body, "url": url})
-            if args.dry_run or not sc_key:
+            if args.dry_run or not key_ok:
                 continue
             try:
                 _send_push(config, title=title, body=body, url=url)
@@ -423,7 +441,7 @@ def main(argv: list[str] | None = None) -> int:
             preview_out.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             logger.info("wrote dry-run push preview: %s", preview_out)
 
-        if sent_pairs and not args.dry_run and sc_key:
+        if sent_pairs and not args.dry_run and key_ok:
             mark_notified(config.db_path, sent_pairs)
             logger.info("pushed: %d", len(sent_pairs))
         logger.info("done")

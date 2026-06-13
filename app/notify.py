@@ -37,6 +37,46 @@ def simplify_course_name(name: str) -> str:
     return s
 
 
+def send_bark(*, endpoint: str, title: str, body: str, url: str = "", timeout_s: int = 10) -> None:
+    """
+    Send a Bark push (iOS/iPadOS).
+
+    `endpoint` should look like: https://api.day.app/<token>
+    """
+    endpoint = (endpoint or "").strip()
+    if not endpoint:
+        raise ValueError("BARK_ENDPOINT is empty.")
+
+    import requests
+    from urllib.parse import quote
+    from urllib.parse import urlparse
+
+    def normalize_endpoint(ep: str) -> str:
+        ep = (ep or "").strip().rstrip("/")
+        if not ep:
+            return ""
+        if "://" not in ep:
+            if "/" not in ep:
+                return f"https://api.day.app/{ep}"
+            return f"https://{ep}"
+        return ep
+
+    endpoint = normalize_endpoint(endpoint)
+    parsed = urlparse(endpoint)
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError("Invalid BARK_ENDPOINT; use https://api.day.app/<token> or just <token>.")
+
+    push_url = endpoint.rstrip("/") + "/" + quote(title, safe="") + "/" + quote(body, safe="")
+    params = {}
+
+    try:
+        resp = requests.get(push_url, params=params, timeout=timeout_s)
+    except Exception:
+        raise RuntimeError("bark request failed") from None
+    if resp.status_code >= 400:
+        raise RuntimeError(f"bark http {resp.status_code}")
+
+
 def send_serverchan(*, sendkey: str, title: str, body: str, timeout_s: int = 10) -> None:
     """
     Send a push via Server酱 (ServerChan).
