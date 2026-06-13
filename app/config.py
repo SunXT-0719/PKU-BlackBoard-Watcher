@@ -50,7 +50,7 @@ class Config:
     bb_password: str
 
     db_path: Path
-    bark_endpoint: str
+    serverchan_sendkey: str
     poll_limit_per_run: int
     course_term_filter: str
     headless: bool
@@ -81,7 +81,7 @@ def load_config(project_root: Path) -> Config:
         bb_username=getenv("BB_USERNAME", ""),
         bb_password=getenv("BB_PASSWORD", ""),
         db_path=db_path,
-        bark_endpoint=getenv("BARK_ENDPOINT", ""),
+        serverchan_sendkey=getenv("SERVERCHAN_SENDKEY", ""),
         poll_limit_per_run=_as_int(getenv("POLL_LIMIT_PER_RUN"), 100),
         course_term_filter=getenv("COURSE_TERM_FILTER", "current"),
         headless=_as_bool(getenv("HEADLESS"), True),

@@ -37,50 +37,42 @@ def simplify_course_name(name: str) -> str:
     return s
 
 
-def send_bark(*, endpoint: str, title: str, body: str, url: str = "", timeout_s: int = 10) -> None:
+def send_serverchan(*, sendkey: str, title: str, body: str, timeout_s: int = 10) -> None:
     """
-    Send a Bark push.
+    Send a push via Server酱 (ServerChan).
 
-    `endpoint` should look like: https://api.day.app/<token>
+    `sendkey` is the SCT key from https://sct.ftqq.com/.
+    API: POST https://sctapi.ftqq.com/<sendkey>.send  with JSON {"title":"...", "desp":"..."}
+    Title is truncated to 32 characters (Server酱 limit).
     """
-    endpoint = (endpoint or "").strip()
-    if not endpoint:
-        raise ValueError("BARK_ENDPOINT is empty.")
-
     import requests
-    from urllib.parse import quote
-    from urllib.parse import urlparse
 
-    def normalize_endpoint(ep: str) -> str:
-        ep = (ep or "").strip().rstrip("/")
-        if not ep:
-            return ""
-        # Accept token-only form: "<token>"
-        if "://" not in ep:
-            if "/" not in ep:
-                return f"https://api.day.app/{ep}"
-            # Accept host/path without scheme: "api.day.app/<token>"
-            return f"https://{ep}"
-        return ep
+    sendkey = (sendkey or "").strip()
+    if not sendkey:
+        raise ValueError("SERVERCHAN_SENDKEY is empty.")
 
-    endpoint = normalize_endpoint(endpoint)
-    parsed = urlparse(endpoint)
-    if not parsed.scheme or not parsed.netloc:
-        raise ValueError("Invalid BARK_ENDPOINT; use https://api.day.app/<token> or just <token>.")
+    api_url = f"https://sctapi.ftqq.com/{sendkey}.send"
 
-    # Bark uses path segments; encode them safely.
-    push_url = endpoint.rstrip("/") + "/" + quote(title, safe="") + "/" + quote(body, safe="")
-    # User preference: do not include clickable URL in pushes (many clients won't open it anyway).
-    # Keep the function signature for compatibility, but ignore `url`.
-    params = {}
+    # Server酱 title limit: 32 characters
+    truncated_title = title[:32]
+
+    payload = {"title": truncated_title, "desp": body}
 
     try:
-        resp = requests.get(push_url, params=params, timeout=timeout_s)
+        resp = requests.post(api_url, json=payload, timeout=timeout_s)
     except Exception:
-        # Avoid leaking token in exception messages.
-        raise RuntimeError("bark request failed") from None
+        raise RuntimeError("serverchan request failed") from None
+
     if resp.status_code >= 400:
-        raise RuntimeError(f"bark http {resp.status_code}")
+        raise RuntimeError(f"serverchan http {resp.status_code}")
+
+    try:
+        data = resp.json()
+    except Exception:
+        raise RuntimeError("serverchan response not json") from None
+    if data.get("code") != 0:
+        err_msg = data.get("message", "unknown error")
+        raise RuntimeError(f"serverchan error [{data.get('code')}]: {err_msg}")
 
 
 def _excerpt(text: str, limit: int = 160) -> str:

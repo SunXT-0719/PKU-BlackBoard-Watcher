@@ -23,7 +23,7 @@ from app.bb import (
 )
 from app.config import load_config
 from app.logging_utils import setup_logging
-from app.notify import message_for_new_item, message_for_updated_item, send_bark
+from app.notify import message_for_new_item, message_for_updated_item, send_serverchan
 from app.store import init_db
 
 
@@ -32,6 +32,14 @@ logger = logging.getLogger(__name__)
 
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[1]
+
+
+def _send_push(config: object, *, title: str, body: str, url: str = "") -> None:
+    """Dispatch push via Server酱."""
+    sc_key = (getattr(config, "serverchan_sendkey", "") or "").strip()
+    if not sc_key:
+        raise RuntimeError("SERVERCHAN_SENDKEY is not set")
+    send_serverchan(sendkey=sc_key, title=title, body=body)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,12 +56,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--debug-grades", action="store_true", help='Dump HTML for one course "个人成绩" page.')
     parser.add_argument("--fetch-all", action="store_true", help="Fetch all courses and all boards into unified Items.")
-    parser.add_argument("--run", action="store_true", help="Fetch all items and push Bark notifications (Step E).")
+    parser.add_argument("--run", action="store_true", help="Fetch all items and push Server酱 notifications.")
     parser.add_argument("--dry-run", action="store_true", help="Do not push; only log pending notifications.")
     parser.add_argument(
         "--dry-run-out",
         default="",
-        help="When used with --run --dry-run, write Bark message previews to this file (JSON).",
+        help="When used with --run --dry-run, write push message previews to this file (JSON).",
     )
     parser.add_argument("--course-query", default="", help="Substring to match the target course in portal list.")
     parser.add_argument("--course-limit", type=int, default=0, help="Limit courses fetched for --fetch-all (0 = no limit).")
@@ -294,7 +302,7 @@ def main(argv: list[str] | None = None) -> int:
         # First-run behavior: avoid spamming historical items.
         # If the DB has no notified rows yet, send one initialization message and mark all current items as notified.
         if is_bootstrap:
-            endpoint = (config.bark_endpoint or "").strip()
+            sc_key = (config.serverchan_sendkey or "").strip()
             init_title = "PKU-BlackBoard-Watcher 初始化完成"
             init_body = (
                 f"已同步历史记录：{len(items)} 条（课程：{len(result.courses)} 门）\n"
@@ -303,8 +311,7 @@ def main(argv: list[str] | None = None) -> int:
             logger.info("bootstrap mode: db_total=%d db_notified=%d items=%d courses=%d", total_rows, notified_rows, len(items), len(result.courses))
 
             if args.dry_run:
-                # Still write preview file if requested; do not touch DB.
-                preview_out = Path(args.dry_run_out) if args.dry_run_out else (root / "data" / "bark_dry_run.json")
+                preview_out = Path(args.dry_run_out) if args.dry_run_out else (root / "data" / "push_preview.json")
                 preview_out.parent.mkdir(parents=True, exist_ok=True)
                 payload = {
                     "bootstrap": True,
@@ -316,20 +323,20 @@ def main(argv: list[str] | None = None) -> int:
                     "note": "bootstrap would mark all current items as notified",
                 }
                 preview_out.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-                logger.info("wrote dry-run bark preview: %s", preview_out)
+                logger.info("wrote dry-run push preview: %s", preview_out)
                 logger.info("done")
                 return 0
 
-            if not endpoint:
-                logger.error("bootstrap requires BARK_ENDPOINT to send the initialization message")
+            if not sc_key:
+                logger.error("bootstrap requires SERVERCHAN_SENDKEY to send the initialization message")
                 return 2
 
             # Upsert first so mark_notified has rows to update.
             upsert_seen(config.db_path, items)
             try:
-                send_bark(endpoint=endpoint, title=init_title, body=init_body, url="")
+                _send_push(config, title=init_title, body=init_body, url="")
             except Exception as e:
-                logger.error("bootstrap bark push failed (%s): %s", type(e).__name__, str(e)[:120])
+                logger.error("bootstrap push failed (%s): %s", type(e).__name__, str(e)[:120])
                 return 2
             mark_notified(config.db_path, [(it.identity_fp(), it.state_fp()) for it in items])
             logger.info("bootstrap done: marked %d items as notified", len(items))
@@ -380,13 +387,13 @@ def main(argv: list[str] | None = None) -> int:
         pending.sort(key=lambda t: (-t[0], t[1]))
         to_send = pending[:limit] if limit > 0 else pending
 
-        endpoint = (config.bark_endpoint or "").strip()
+        sc_key = (config.serverchan_sendkey or "").strip()
         sent_pairs: list[tuple[str, str]] = []
-        preview_out = Path(args.dry_run_out) if args.dry_run_out else (root / "data" / "bark_dry_run.json")
+        preview_out = Path(args.dry_run_out) if args.dry_run_out else (root / "data" / "push_preview.json")
 
         logger.info("run summary: items=%d pending=%d limit=%d", len(items), len(pending), limit)
-        if not endpoint:
-            logger.warning("BARK_ENDPOINT is empty; will not push (use --dry-run to silence this).")
+        if not sc_key:
+            logger.warning("SERVERCHAN_SENDKEY is not set; will not push (use --dry-run to silence this).")
 
         previews: list[dict] = []
         for _, fp, state_fp, msg in to_send:
@@ -397,13 +404,13 @@ def main(argv: list[str] | None = None) -> int:
             logger.info("push planned: %s | %s", title, body.splitlines()[0] if body else "")
             if args.dry_run:
                 previews.append({"fp": fp, "state_fp": state_fp, "title": title, "body": body, "url": url})
-            if args.dry_run or not endpoint:
+            if args.dry_run or not sc_key:
                 continue
             try:
-                send_bark(endpoint=endpoint, title=title, body=body, url=url)
+                _send_push(config, title=title, body=body, url=url)
                 sent_pairs.append((fp, state_fp))
             except Exception as e:
-                logger.error("bark push failed (%s): %s", type(e).__name__, str(e)[:120])
+                logger.error("push failed (%s): %s", type(e).__name__, str(e)[:120])
 
         if args.dry_run:
             preview_out.parent.mkdir(parents=True, exist_ok=True)
@@ -414,9 +421,9 @@ def main(argv: list[str] | None = None) -> int:
                 "messages": previews,
             }
             preview_out.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            logger.info("wrote dry-run bark preview: %s", preview_out)
+            logger.info("wrote dry-run push preview: %s", preview_out)
 
-        if sent_pairs and not args.dry_run and endpoint:
+        if sent_pairs and not args.dry_run and sc_key:
             mark_notified(config.db_path, sent_pairs)
             logger.info("pushed: %d", len(sent_pairs))
         logger.info("done")
